@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>飛行日常無人機足球聯賽 | 官方戰績與賽事查詢系統</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-blue: #1a365d;
+            --accent-blue: #2b6cb0;
+            --light-bg: #f8fafc;
+        }
+        body {
+            background-color: var(--light-bg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft JhengHei", sans-serif;
+            color: #2d3748;
+        }
+        .hero-banner {
+            background: linear-gradient(135deg, var(--primary-blue), var(--accent-blue));
+            color: white;
+            padding: 2.5rem 1rem;
+            border-radius: 0 0 1.5rem 1.5rem;
+            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.15);
+            margin-bottom: 2rem;
+        }
+        .league-logo {
+            width: 120px;
+            height: auto;
+            object-fit: contain;
+            border-radius: 12px;
+            background: white;
+            padding: 6px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        .card {
+            border: none;
+            border-radius: 1rem;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+        .card-header {
+            background-color: var(--primary-blue);
+            color: white;
+            font-weight: 700;
+            padding: 1rem 1.25rem;
+            border: none;
+        }
+        .nav-pills .nav-link {
+            color: var(--primary-blue);
+            font-weight: 600;
+            border-radius: 2rem;
+            padding: 0.6rem 1.5rem;
+            margin: 0 0.25rem;
+            transition: all 0.2s ease;
+        }
+        .nav-pills .nav-link.active {
+            background-color: var(--primary-blue);
+            color: white;
+            box-shadow: 0 4px 8px rgba(26, 54, 93, 0.2);
+        }
+        .table th {
+            background-color: #edf2f7;
+            color: #2d3748;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .table td {
+            font-size: 0.95rem;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 頂部 Header 加上 Logo -->
+    <div class="hero-banner text-center">
+        <div class="container d-flex flex-column align-items-center justify-content-center">
+            <img src="logo.png" alt="飛行日常 Logo" class="league-logo mx-auto d-block mb-3" id="dynamic-logo">
+            <h1 class="fw-bold mb-2">飛行日常無人機足球聯賽</h1>
+            <p class="lead mb-0 opacity-90">官方戰績積分排行榜 · 賽事對戰紀錄 · 歷史對戰淨得分查詢</p>
+        </div>
+    </div>
+
+    <div class="container pb-5">
+
+        <!-- 資料庫同步狀態 -->
+        <div class="card mb-4 bg-white border-start border-4 border-primary">
+            <div class="card-body p-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-link text-primary fs-4 me-3"></i>
+                    <div>
+                        <strong class="d-block">Google Sheet 資料庫同步</strong>
+                        <small class="text-muted" id="sync-status">載入中...</small>
+                    </div>
+                </div>
+                <button class="btn btn-outline-primary btn-sm rounded-pill px-3" onclick="loadAllData()">
+                    <i class="fas fa-sync-alt me-1"></i> 重新整理
+                </button>
+            </div>
+        </div>
+
+        <!-- 頁籤按鈕 -->
+        <ul class="nav nav-pills justify-content-center mb-4" id="mainTab" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" id="leaderboard-tab" data-bs-toggle="pill" data-bs-target="#tab-leaderboard" type="button">
+                    <i class="fas fa-trophy me-1"></i> 積分排行榜
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="matches-tab" data-bs-toggle="pill" data-bs-target="#tab-matches" type="button">
+                    <i class="fas fa-gamepad me-1"></i> 賽事對戰紀錄
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="h2h-tab" data-bs-toggle="pill" data-bs-target="#tab-h2h" type="button">
+                    <i class="fas fa-balance-scale me-1"></i> 歷史對戰淨得分
+                </button>
+            </li>
+        </ul>
+
+        <!-- 分頁內容 -->
+        <div class="tab-content" id="mainTabContent">
+
+            <!-- 1. 積分排行榜 -->
+            <div class="tab-pane fade show active" id="tab-leaderboard" role="tabpanel">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-trophy me-2"></i>聯賽積分排行榜與淨得分統計</span>
+                        <span class="badge bg-light text-dark">Official Leaderboard</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0 text-center">
+                                <thead>
+                                    <tr>
+                                        <th>排名</th>
+                                        <th class="text-start">隊伍名稱</th>
+                                        <th>已賽</th>
+                                        <th>勝/平/敗</th>
+                                        <th>總進球</th>
+                                        <th>總失球</th>
+                                        <th>淨得分</th>
+                                        <th>總積分</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tbody-leaderboard">
+                                    <tr><td colspan="8" class="py-4 text-muted">讀取中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. 賽事對戰紀錄 -->
+            <div class="tab-pane fade" id="tab-matches" role="tabpanel">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-list-ol me-2"></i>賽事對戰紀錄表</div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0 text-center">
+                                <thead>
+                                    <tr>
+                                        <th>比賽日期</th>
+                                        <th>場次</th>
+                                        <th>主隊名稱</th>
+                                        <th>客隊名稱</th>
+                                        <th>比賽比分</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tbody-matches">
+                                    <tr><td colspan="5" class="py-4 text-muted">讀取中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. 歷史對戰淨得分查詢 -->
+            <div class="tab-pane fade" id="tab-h2h" role="tabpanel">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-search me-2"></i>兩隊對戰歷史淨得分與讓分參考查詢</div>
+                    <div class="card-body p-4">
+                        <div class="row g-3 align-items-center mb-4">
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold">隊伍 A (強隊/主)</label>
+                                <select id="select-team-a" class="form-select form-select-lg"><option value="">-- 請選擇隊伍 A --</option></select>
+                            </div>
+                            <div class="col-md-2 text-center fs-3 fw-bold text-muted">VS</div>
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold">隊伍 B (弱隊/客)</label>
+                                <select id="select-team-b" class="form-select form-select-lg"><option value="">-- 請選擇隊伍 B --</option></select>
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <button class="btn btn-primary btn-lg px-5 fw-bold rounded-pill" onclick="calculateH2H()">
+                                <i class="fas fa-calculator me-2"></i>計算對戰淨得分與建議讓分
+                            </button>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div id="h2h-result-box" class="p-4 text-center rounded-3 bg-light d-none">
+                            <h4 class="fw-bold mb-3" id="h2h-title">對戰數據分析</h4>
+                            <div class="row g-3 my-2">
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-white rounded shadow-sm">
+                                        <small class="text-muted d-block">交手場次</small>
+                                        <span class="fs-3 fw-bold text-primary" id="h2h-count">0</span> 場
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-white rounded shadow-sm">
+                                        <small class="text-muted d-block">歷史總淨得分差 (ΔD)</small>
+                                        <span class="fs-3 fw-bold text-success" id="h2h-net-diff">0.0</span> 分
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-white rounded shadow-sm">
+                                        <small class="text-muted d-block">建議開局讓分</small>
+                                        <span class="fs-3 fw-bold text-danger" id="h2h-handicap">0</span> 分
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- JavaScript & Google Sheet API 自動連線邏輯 -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const SPREADSHEET_ID = "1CJHuNycTsr2Mou6ThGYIr-cuP6qGfCY6pA0JNsFvIqY";
+        const LEADERBOARD_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:csv&sheet=Leaderboard";
+        const TEAMS_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:csv&sheet=Teams";
+        
+        const MATCH_SHEETS = ["1025"]; 
+
+        let globalMatches = [];
+        let globalTeams = [];
+
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            return lines.map(line => {
+                const values = [];
+                let insideQuote = false;
+                let currentVal = '';
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') {
+                        insideQuote = !insideQuote;
+                    } else if (char === ',' && !insideQuote) {
+                        values.push(currentVal.trim().replace(/^"|"$/g, ''));
+                        currentVal = '';
+                    } else {
+                        currentVal += char;
+                    }
+                }
+                values.push(currentVal.trim().replace(/^"|"$/g, ''));
+                return values;
+            });
+        }
+
+        async function loadAllData() {
+            document.getElementById('sync-status').innerText = "正在讀取最新戰績資料...";
+            try {
+                await Promise.all([fetchLeaderboard(), fetchMatches(), fetchTeams()]);
+                document.getElementById('sync-status').innerText = "資料已完成同步！(" + new Date().toLocaleTimeString() + ")";
+            } catch (err) {
+                console.error(err);
+                document.getElementById('sync-status').innerText = "自動同步連線中";
+            }
+        }
+
+        async function fetchLeaderboard() {
+            const res = await fetch(LEADERBOARD_CSV_URL);
+            const text = await res.text();
+            renderLeaderboard(parseCSV(text));
+        }
+
+        async function fetchMatches() {
+            globalMatches = [];
+            for (const sheetName of MATCH_SHEETS) {
+                try {
+                    const url = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:csv&sheet=" + sheetName;
+                    const res = await fetch(url);
+                    const text = await res.text();
+                    const rows = parseCSV(text);
+                    for (let i = 1; i < rows.length; i++) {
+                        if (rows[i] && rows[i].length >= 9) {
+                            globalMatches.push({
+                                date: rows[i][0] || sheetName,
+                                matchNo: rows[i][1],
+                                homeName: rows[i][3], 
+                                awayName: rows[i][5], 
+                                homeScore: rows[i][7], 
+                                awayScore: rows[i][8]  
+                            });
+                        }
+                    }
+                } catch(e) {
+                    console.log("載入分頁失敗: " + sheetName, e);
+                }
+            }
+            renderMatches(globalMatches);
+        }
+
+        async function fetchTeams() {
+            const res = await fetch(TEAMS_CSV_URL);
+            const text = await res.text();
+            const rows = parseCSV(text);
+            globalTeams = [];
+            for (let i = 1; i < rows.length; i++) {
+                if (rows[i] && rows[i][1]) {
+                    globalTeams.push({
+                        id: rows[i][0],
+                        name: rows[i][1]
+                    });
+                }
+            }
+            populateTeamDropdowns(globalTeams);
+        }
+
+        function renderLeaderboard(data) {
+            const tbody = document.getElementById('tbody-leaderboard');
+            tbody.innerHTML = '';
+            
+            let teamsList = [];
+            for (let i = 1; i < data.length; i++) {
+                const row = data[i];
+                if (!row || !row[1]) continue;
+                teamsList.push({
+                    name: row[2],  
+                    played: parseInt(row[3]) || 0, 
+                    win: parseInt(row[4]) || 0,    
+                    draw: parseInt(row[5]) || 0,   
+                    loss: parseInt(row[6]) || 0,   
+                    gf: parseInt(row[7]) || 0,     
+                    ga: parseInt(row[8]) || 0,     
+                    net: parseInt(row[9]) || 0,    
+                    totalPts: parseInt(row[10]) || 0 
+                });
+            }
+
+            teamsList.sort((a, b) => b.totalPts - a.totalPts);
+
+            teamsList.forEach((t, idx) => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td class="fw-bold">${idx + 1}</td>
+                        <td class="text-start fw-bold">${t.name}</td>
+                        <td>${t.played}</td>
+                        <td><small class="text-muted">${t.win}/${t.draw}/${t.loss}</small></td>
+                        <td>${t.gf}</td>
+                        <td>${t.ga}</td>
+                        <td class="fw-bold ${t.net>=0?'text-success':'text-danger'}">${t.net}</td>
+                        <td><span class="badge bg-primary px-2 fs-6">${t.totalPts}</span></td>
+                    </tr>`;
+            });
+
+            if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="8" class="text-muted py-4">尚無隊伍積分資料</td></tr>';
+        }
+
+        function renderMatches(matches) {
+            const tbody = document.getElementById('tbody-matches');
+            tbody.innerHTML = '';
+            matches.forEach(m => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td><small class="text-muted">${m.date}</small></td>
+                        <td>第 ${m.matchNo} 場</td>
+                        <td class="fw-bold">${m.homeName}</td>
+                        <td class="fw-bold">${m.awayName}</td>
+                        <td><span class="badge bg-secondary fs-6">${m.homeScore} : ${m.awayScore}</span></td>
+                    </tr>`;
+            });
+            if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="5" class="text-muted py-4">尚無賽事戰績紀錄</td></tr>';
+        }
+
+        function populateTeamDropdowns(teams) {
+            const selA = document.getElementById('select-team-a');
+            const selB = document.getElementById('select-team-b');
+            selA.innerHTML = '<option value="">-- 請選擇隊伍 A --</option>';
+            selB.innerHTML = '<option value="">-- 請選擇隊伍 B --</option>';
+            teams.forEach(t => {
+                selA.innerHTML += '<option value="' + t.name + '">' + t.name + '</option>';
+                selB.innerHTML += '<option value="' + t.name + '">' + t.name + '</option>';
+            });
+        }
+
+        function calculateH2H() {
+            const teamA = document.getElementById('select-team-a').value;
+            const teamB = document.getElementById('select-team-b').value;
+            if (!teamA || !teamB || teamA === teamB) { alert("請選擇兩支不同的隊伍！"); return; }
+
+            let count = 0, netDiff = 0;
+            globalMatches.forEach(m => {
+                const hScore = parseInt(m.homeScore) || 0;
+                const aScore = parseInt(m.awayScore) || 0;
+                if (m.homeName === teamA && m.awayName === teamB) {
+                    count++;
+                    netDiff += (hScore - aScore);
+                } else if (m.homeName === teamB && m.awayName === teamA) {
+                    count++;
+                    netDiff += (aScore - hScore);
+                }
+            });
+
+            let handicap = 0;
+            const absDiff = Math.abs(netDiff);
+            if (absDiff >= 15) handicap = 15;
+            else if (absDiff >= 10) handicap = 10;
+            else if (absDiff >= 5) handicap = 5;
+            else handicap = 0;
+
+            document.getElementById('h2h-title').innerText = teamA + " 對戰 " + teamB + " 數據分析";
+            document.getElementById('h2h-count').innerText = count;
+            document.getElementById('h2h-net-diff').innerText = netDiff.toFixed(1);
+            document.getElementById('h2h-handicap').innerText = handicap + " 分";
+            document.getElementById('h2h-result-box').classList.remove('d-none');
+        }
+
+        window.onload = loadAllData;
+    </script>
+</body>
+</html>
