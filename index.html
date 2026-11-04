@@ -76,10 +76,10 @@
 </head>
 <body>
 
-    <!-- 頂部 Header 加上 Logo -->
+    <!-- 頂部 Header 加上 Logo (置中對齊) -->
     <div class="hero-banner text-center">
         <div class="container d-flex flex-column align-items-center justify-content-center">
-            <img src="logo.png" alt="飛行日常 Logo" class="league-logo mx-auto d-block mb-3" id="dynamic-logo">
+            <img src="images/logo.png" alt="飛行日常 Logo" class="league-logo mx-auto d-block mb-3" id="dynamic-logo">
             <h1 class="fw-bold mb-2">飛行日常無人機足球聯賽</h1>
             <p class="lead mb-0 opacity-90">官方戰績積分排行榜 · 賽事對戰紀錄 · 歷史對戰淨得分查詢</p>
         </div>
@@ -141,9 +141,9 @@
                                         <th class="text-start">隊伍名稱</th>
                                         <th>已賽</th>
                                         <th>勝/平/敗</th>
+                                        <th>淨勝球</th>
                                         <th>總進球</th>
-                                        <th>總失球</th>
-                                        <th>淨得分</th>
+                                        <th>淨負球</th>
                                         <th>總積分</th>
                                     </tr>
                                 </thead>
@@ -343,9 +343,9 @@
                     win: parseInt(row[4]) || 0,    
                     draw: parseInt(row[5]) || 0,   
                     loss: parseInt(row[6]) || 0,   
-                    gf: parseInt(row[7]) || 0,     
-                    ga: parseInt(row[8]) || 0,     
-                    net: parseInt(row[9]) || 0,    
+                    gf: parseInt(row[7]) || 0,     // 總進球
+                    ga: parseInt(row[8]) || 0,     // 淨負球 (原總失球欄位)
+                    net: parseInt(row[9]) || 0,    // 淨勝球 (原淨得分欄位)
                     totalPts: parseInt(row[10]) || 0 
                 });
             }
@@ -359,9 +359,9 @@
                         <td class="text-start fw-bold">${t.name}</td>
                         <td>${t.played}</td>
                         <td><small class="text-muted">${t.win}/${t.draw}/${t.loss}</small></td>
+                        <td class="fw-bold ${t.net>=0?'text-success':'text-danger'}">${t.net}</td>
                         <td>${t.gf}</td>
                         <td>${t.ga}</td>
-                        <td class="fw-bold ${t.net>=0?'text-success':'text-danger'}">${t.net}</td>
                         <td><span class="badge bg-primary px-2 fs-6">${t.totalPts}</span></td>
                     </tr>`;
             });
