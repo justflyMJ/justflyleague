@@ -138,6 +138,7 @@
                                 <thead>
                                     <tr>
                                         <th>排名</th>
+                                        <th>隊伍編號</th>
                                         <th class="text-start">隊伍名稱</th>
                                         <th>已賽</th>
                                         <th>勝/平/敗</th>
@@ -148,7 +149,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="tbody-leaderboard">
-                                    <tr><td colspan="8" class="py-4 text-muted">讀取中...</td></tr>
+                                    <tr><td colspan="9" class="py-4 text-muted">讀取中...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -253,14 +254,50 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="config.js"></script>
     <script>
-        const SPREADSHEET_ID = "1CJHuNycTsr2Mou6ThGYIr-cuP6qGfCY6pA0JNsFvIqY";
-        const LEADERBOARD_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:csv&sheet=Leaderboard";
-        const TEAMS_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SPREADSHEET_ID + "/gviz/tq?tqx=out:csv&sheet=Teams";
+        // 後台網址:優先用 config.js 的設定;讀不到 config.js 時,使用這個內建的預設網址
+        const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzusArIYnwmyuoZvj_K0gNP4jGwzfntws4lYe7w5B-PRlCHpptbTORNqoSOuxVyQMoDPQ/exec";
+        const API_URL = (typeof APPS_SCRIPT_URL !== "undefined" && String(APPS_SCRIPT_URL).indexOf("http") === 0)
+            ? APPS_SCRIPT_URL : DEFAULT_APPS_SCRIPT_URL;
+
+        // 預設的試算表 ID。實際使用的 ID 以後台「系統設定」為準(向 Apps Script 詢問),
+        // 只有連不上後台時才會退回使用這個預設值。
+        const DEFAULT_SPREADSHEET_ID = "1CJHuNycTsr2Mou6ThGYIr-cuP6qGfCY6pA0JNsFvIqY";
+        let SPREADSHEET_ID = DEFAULT_SPREADSHEET_ID;
+        let LEADERBOARD_CSV_URL = "";
+        let TEAMS_CSV_URL = "";
+        let remoteSheetNames = null;   // 後台回報的日期分頁;null 代表沒有問到
+
+        function applySpreadsheetId(id) {
+            SPREADSHEET_ID = id;
+            const base = "https://docs.google.com/spreadsheets/d/" + id + "/gviz/tq?tqx=out:csv&sheet=";
+            LEADERBOARD_CSV_URL = base + "Leaderboard";
+            TEAMS_CSV_URL = base + "Teams";
+        }
+        applySpreadsheetId(DEFAULT_SPREADSHEET_ID);
+
+        // 向後台詢問目前的試算表 ID 與日期分頁;失敗就維持預設值
+        async function loadRemoteConfig() {
+            remoteSheetNames = null;
+            if (typeof API_URL === 'undefined' || API_URL.indexOf('http') !== 0) return;
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 10000);
+            try {
+                const res = await fetch(API_URL + "?action=config", { signal: ctrl.signal });
+                const data = await res.json();
+                if (data && data.sheetId) applySpreadsheetId(data.sheetId);
+                if (data && data.ok && Array.isArray(data.sheets)) remoteSheetNames = data.sheets.map(String);
+            } catch (e) {
+                console.log("無法向後台取得設定,使用預設試算表", e);
+            } finally {
+                clearTimeout(timer);
+            }
+        }
         
         const MATCH_SHEETS = ["1025"]; 
 
         let globalMatches = [];
         let globalTeams = [];
+        let leaderboardData = null;   // 排行榜原始資料,隊伍名單載入後會再畫一次以帶入隊伍編號
 
         function parseCSV(text) {
             const lines = text.trim().split('\n');
@@ -298,6 +335,7 @@
         async function loadAllData() {
             document.getElementById('sync-status').innerText = "正在讀取最新戰績資料...";
             try {
+                await loadRemoteConfig();
                 await Promise.all([fetchLeaderboard(), fetchMatches(), fetchTeams()]);
                 document.getElementById('sync-status').innerText = "資料已完成同步！(" + new Date().toLocaleTimeString() + ")";
             } catch (err) {
@@ -309,7 +347,8 @@
 
         async function fetchLeaderboard() {
             const text = await fetchCsv(LEADERBOARD_CSV_URL);
-            renderLeaderboard(parseCSV(text));
+            leaderboardData = parseCSV(text);
+            renderLeaderboard(leaderboardData);
         }
 
         // 分頁名稱(例如 1025)轉成日期文字(10月25日)
@@ -320,19 +359,11 @@
             return n;
         }
 
-        // 取得所有日期分頁:優先向後台詢問(新增的比賽日會自動出現),失敗就用 MATCH_SHEETS
+        // 取得所有日期分頁:有問到後台就以後台為準(新增的比賽日會自動出現,換試算表也不會讀錯),
+        // 問不到才用 MATCH_SHEETS 的預設清單
         async function discoverSheets() {
-            const names = new Set(MATCH_SHEETS);
-            try {
-                if (typeof APPS_SCRIPT_URL !== 'undefined' && APPS_SCRIPT_URL.indexOf('http') === 0) {
-                    const res = await fetch(APPS_SCRIPT_URL + "?action=matchSheets");
-                    const data = await res.json();
-                    if (data && data.ok && Array.isArray(data.sheets)) data.sheets.forEach(n => names.add(String(n)));
-                }
-            } catch (e) {
-                console.log("無法自動偵測日期分頁,改用預設清單", e);
-            }
-            return Array.from(names).sort((a, b) => Number(a) - Number(b));
+            const names = remoteSheetNames !== null ? remoteSheetNames : MATCH_SHEETS;
+            return Array.from(new Set(names)).sort((a, b) => Number(a) - Number(b));
         }
 
         async function fetchMatches() {
@@ -405,17 +436,23 @@
                 }
             }
             populateTeamDropdowns(globalTeams);
+            if (leaderboardData) renderLeaderboard(leaderboardData);   // 帶入隊伍編號
         }
 
         function renderLeaderboard(data) {
             const tbody = document.getElementById('tbody-leaderboard');
             tbody.innerHTML = '';
             
+            // 隊伍名稱 → 隊伍編號(來自 Teams 分頁)
+            const idByName = {};
+            globalTeams.forEach(t => { idByName[String(t.name).trim()] = t.id; });
+
             let teamsList = [];
             for (let i = 1; i < data.length; i++) {
                 const row = data[i];
                 if (!row || !row[1]) continue;
                 teamsList.push({
+                    id: idByName[String(row[2]).trim()] || '-',
                     name: row[2],  
                     played: parseInt(row[3]) || 0, 
                     win: parseInt(row[4]) || 0,    
@@ -434,6 +471,7 @@
                 tbody.innerHTML += `
                     <tr>
                         <td class="fw-bold">${idx + 1}</td>
+                        <td><span class="badge bg-secondary">${t.id}</span></td>
                         <td class="text-start fw-bold">${t.name}</td>
                         <td>${t.played}</td>
                         <td><small class="text-muted">${t.win}/${t.draw}/${t.loss}</small></td>
@@ -444,7 +482,7 @@
                     </tr>`;
             });
 
-            if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="8" class="text-muted py-4">尚無隊伍積分資料</td></tr>';
+            if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="9" class="text-muted py-4">尚無隊伍積分資料</td></tr>';
         }
 
         document.getElementById('select-match-date').addEventListener('change', applyMatchFilter);

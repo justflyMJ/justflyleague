@@ -68,6 +68,11 @@
                 </button>
             </li>
             <li class="nav-item">
+                <button class="nav-link" id="settings-tab-btn" data-bs-toggle="pill" data-bs-target="#tab-settings" type="button">
+                    <i class="fas fa-database me-1"></i> 系統設定
+                </button>
+            </li>
+            <li class="nav-item">
                 <button class="nav-link" id="account-tab-btn" data-bs-toggle="pill" data-bs-target="#tab-account" type="button">
                     <i class="fas fa-user-cog me-1"></i> 帳號設定
                 </button>
@@ -209,6 +214,40 @@
                 </div>
             </div>
 
+            <!-- 系統設定 -->
+            <div class="tab-pane fade" id="tab-settings">
+                <div class="card" style="max-width: 720px; margin-left: auto; margin-right: auto;">
+                    <div class="card-header">資料來源(Google Sheet)</div>
+                    <div class="card-body p-4">
+                        <div class="mb-3">
+                            <div class="section-label mb-1">目前使用的試算表</div>
+                            <div id="cur-sheet-title" class="fw-bold">讀取中...</div>
+                            <div class="small text-muted text-break" id="cur-sheet-id"></div>
+                            <div class="small mt-1" id="cur-sheet-tabs"></div>
+                        </div>
+                        <hr>
+                        <label for="sheet-id-input" class="form-label fw-bold">Google Sheet ID</label>
+                        <input type="text" id="sheet-id-input" class="form-control form-control-lg mb-1" placeholder="貼上試算表網址,或網址中 /d/ 後面那一長串 ID" autocomplete="off" spellcheck="false">
+                        <div class="form-text mb-3">
+                            首頁讀取戰績的資料,以及後台新增隊伍、輸入比賽結果寫入的位置,都會改用這份試算表。
+                            輸入框預先填好的是目前使用的 ID;清空後按儲存,會恢復成預設(綁定 Apps Script 的那份試算表)。
+                        </div>
+                        <div class="alert alert-info small">
+                            <i class="fas fa-info-circle me-1"></i>
+                            新的試算表需要:① 分享設定為「知道連結的任何人都能檢視」(首頁才讀得到);
+                            ② 執行 Apps Script 的 Google 帳號可以編輯它(後台才寫得進去);
+                            ③ 有名稱為 <b>Leaderboard</b> 與 <b>Teams</b> 的分頁,比賽分頁用 1025 這類數字命名。
+                        </div>
+                        <div id="settings-msg" class="mb-3 d-none"></div>
+                        <div class="text-center">
+                            <button id="save-settings-btn" class="btn btn-primary btn-lg px-5 fw-bold rounded-pill">
+                                <i class="fas fa-check me-2"></i>測試並儲存
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 帳號設定 -->
             <div class="tab-pane fade" id="tab-account">
                 <div class="card" style="max-width: 520px; margin-left: auto; margin-right: auto;">
@@ -237,6 +276,10 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="config.js"></script>
     <script>
+        // 後台網址:優先用 config.js 的設定;讀不到 config.js 時,使用這個內建的預設網址
+        const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzusArIYnwmyuoZvj_K0gNP4jGwzfntws4lYe7w5B-PRlCHpptbTORNqoSOuxVyQMoDPQ/exec";
+        const API_URL = (typeof APPS_SCRIPT_URL !== "undefined" && String(APPS_SCRIPT_URL).indexOf("http") === 0)
+            ? APPS_SCRIPT_URL : DEFAULT_APPS_SCRIPT_URL;
         const $ = id => document.getElementById(id);
         const LOGIN_URL = "admin.html";
         let username = sessionStorage.getItem('adminUser') || '';
@@ -250,13 +293,13 @@
         }
 
         // 沒有登入資訊就回登入頁
-        if (!username || !password || typeof APPS_SCRIPT_URL === 'undefined' || APPS_SCRIPT_URL.indexOf('http') !== 0) {
+        if (!username || !password || typeof API_URL === 'undefined' || API_URL.indexOf('http') !== 0) {
             goLogin();
         }
 
         async function callApi(payload) {
             // 使用 text/plain 可避免瀏覽器跨網域預檢,Apps Script 才收得到
-            const res = await fetch(APPS_SCRIPT_URL, {
+            const res = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({ ...payload, user: username, password })
@@ -429,6 +472,58 @@
             list.prepend(li);
         }
 
+        /* ---------- 系統設定 ---------- */
+        function showSettings(r) {
+            $('cur-sheet-title').textContent = r.title
+                ? r.title + (r.custom ? '' : '(預設)')
+                : (r.custom ? '(無法開啟)' : '(預設)');
+            $('cur-sheet-id').textContent = r.sheetId ? 'ID:' + r.sheetId : '';
+            $('cur-sheet-tabs').textContent = (r.sheets && r.sheets.length) ? '分頁:' + r.sheets.join('、') : '';
+            $('sheet-id-input').value = r.sheetId || '';   // 預先填入目前使用的 ID
+        }
+
+        async function loadSettings() {
+            try {
+                const r = await callApi({ action: 'getSettings' });
+                if (!r.ok) {
+                    if (r.error && r.error.indexOf('帳號或密碼') !== -1) return goLogin();
+                    throw new Error(r.error || '讀取失敗');
+                }
+                showSettings(r);
+                if (r.warning) showMsg($('settings-msg'), false, r.warning);
+            } catch (e) {
+                $('cur-sheet-title').textContent = '無法讀取目前設定:' + e.message;
+            }
+        }
+
+        async function saveSettings() {
+            const msg = $('settings-msg');
+            const raw = $('sheet-id-input').value.trim();
+            const question = raw
+                ? '確認改用這份試算表?\n\n' + raw + '\n\n首頁與後台之後都會讀寫這份資料。'
+                : '確認恢復成預設試算表?';
+            if (!confirm(question)) return;
+
+            $('save-settings-btn').disabled = true;
+            try {
+                const r = await callApi({ action: 'saveSettings', sheetId: raw });
+                if (r.ok) {
+                    showSettings(r);
+                    let t = (r.message || '已儲存') + (r.title ? ':' + r.title : '');
+                    if (r.warnings && r.warnings.length) t += '。注意:' + r.warnings.join(';');
+                    showMsg(msg, !(r.warnings && r.warnings.length), t);
+                    if (r.warnings && r.warnings.length) msg.className = 'alert alert-warning';
+                    newestTeamId = null;
+                    loadTeams();
+                } else {
+                    showMsg(msg, false, r.error || '儲存失敗');
+                }
+            } catch (e) {
+                showMsg(msg, false, '無法連線到後台服務,請稍後再試。');
+            }
+            $('save-settings-btn').disabled = false;
+        }
+
         /* ---------- 帳號設定 ---------- */
         async function saveAccount() {
             const msg = $('account-msg');
@@ -464,6 +559,16 @@
         $('refresh-teams-btn').addEventListener('click', () => { newestTeamId = null; loadTeams(); });
         $('save-match-btn').addEventListener('click', saveMatch);
         $('save-account-btn').addEventListener('click', saveAccount);
+        $('save-settings-btn').addEventListener('click', saveSettings);
+        $('settings-tab-btn').addEventListener('shown.bs.tab', loadSettings);
+
+        // 比賽日期預設為今天(用本機時間,避免時區造成差一天)
+        function todayString() {
+            const d = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        }
+        $('match-date').value = todayString();
 
         async function init() {
             $('welcome-text').textContent = '歡迎回來,' + username;

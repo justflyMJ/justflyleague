@@ -6,6 +6,10 @@
  *   而且存的是加鹽雜湊值,不是明碼,也不在 Google Sheet 裡,
  *   所以不會被「知道連結的人可檢視」的試算表讀到。
  *
+ * 系統設定(資料來源 Google Sheet 的 ID)也存在同一個地方(指令碼屬性 SHEET_ID),
+ *   由後台「系統設定」頁面修改;首頁會向本服務詢問目前要讀哪一份試算表。
+ *   沒有設定時,使用「綁定這個 Apps Script 的那份試算表」。
+ *
  * 預設帳號 admin / 密碼 1234(尚未修改過密碼時有效)。
  * 第一次登入後請立刻到「帳號設定」修改。
  *
@@ -43,12 +47,25 @@ const COL = {
 // ==================
 
 function doGet(e) {
-  // 公開資訊:列出所有日期分頁名稱(例如 1025),首頁用它來產生「選擇比賽日期」選單
-  if (e && e.parameter && e.parameter.action === 'matchSheets') {
-    const names = ss_().getSheets()
-      .map(function (sh) { return sh.getName(); })
-      .filter(function (n) { return /^\d{3,4}$/.test(n); });
-    return json_({ ok: true, sheets: names });
+  const action = e && e.parameter && e.parameter.action;
+
+  // 公開資訊(本來就會出現在網頁原始碼裡):目前的試算表 ID 與日期分頁名稱
+  // 首頁用它決定要讀哪一份試算表、產生「選擇比賽日期」選單
+  if (action === 'config' || action === 'matchSheets') {
+    let sheetId = '';
+    let sheets = [];
+    let error = '';
+    try {
+      const book = ss_();
+      sheetId = book.getId();
+      sheets = book.getSheets()
+        .map(function (sh) { return sh.getName(); })
+        .filter(function (n) { return /^\d{3,4}$/.test(n); });
+    } catch (err) {
+      error = String(err.message || err);
+      sheetId = PropertiesService.getScriptProperties().getProperty('SHEET_ID') || '';
+    }
+    return json_({ ok: !error, sheetId: sheetId, sheets: sheets, error: error });
   }
   return json_({ ok: true, message: '飛行日常聯賽後台服務運作中' });
 }
@@ -89,6 +106,10 @@ function doPost(e) {
         return json_(addTeam_(req));
       case 'listTeams':
         return json_(listTeams_());
+      case 'getSettings':
+        return json_(getSettings_());
+      case 'saveSettings':
+        return json_(saveSettings_(req));
       default:
         return json_({ ok: false, error: '未知的操作' });
     }
@@ -175,8 +196,72 @@ const TEAM_FIELDS = [
   { key: 'member2Unit', header: '隊員2代表單位' }
 ];
 
+// 目前使用的試算表:優先用「系統設定」存的 ID,沒有設定就用綁定的那一份
 function ss_() {
+  const id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+  if (id) return SpreadsheetApp.openById(id);
   return SpreadsheetApp.getActive() || SpreadsheetApp.openById(SPREADSHEET_ID);
+}
+
+/* ---------- 系統設定 ---------- */
+
+// 從網址或純 ID 取出試算表 ID;空字串代表清除設定
+function parseSheetId_(input) {
+  const text = String(input || '').trim();
+  if (!text) return '';
+  const m = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(text)) return text;
+  return null;
+}
+
+function getSettings_() {
+  const stored = PropertiesService.getScriptProperties().getProperty('SHEET_ID') || '';
+  try {
+    const book = ss_();
+    return {
+      ok: true,
+      sheetId: book.getId(),
+      custom: stored !== '',
+      title: book.getName(),
+      sheets: book.getSheets().map(function (sh) { return sh.getName(); })
+    };
+  } catch (err) {
+    return { ok: true, sheetId: stored, custom: true, title: '', sheets: [],
+             warning: '目前設定的試算表無法開啟:' + err.message };
+  }
+}
+
+function saveSettings_(req) {
+  const id = parseSheetId_(req.sheetId);
+  const props = PropertiesService.getScriptProperties();
+
+  if (id === null) {
+    return { ok: false, error: '格式不正確,請貼上試算表網址,或網址中 /d/ 後面那一長串 ID' };
+  }
+  if (id === '') {
+    props.deleteProperty('SHEET_ID');   // 恢復預設:使用綁定的試算表
+    const res = getSettings_();
+    res.message = '已恢復為預設試算表';
+    return res;
+  }
+
+  let book;
+  try {
+    book = SpreadsheetApp.openById(id);
+  } catch (err) {
+    return { ok: false, error: '無法開啟這份試算表,請確認 ID 正確,且執行這個 Apps Script 的 Google 帳號有權限(要能編輯才能寫入資料)' };
+  }
+
+  const names = book.getSheets().map(function (sh) { return sh.getName(); });
+  const warnings = [];
+  ['Leaderboard', 'Teams'].forEach(function (n) {
+    if (names.indexOf(n) === -1) warnings.push('找不到分頁「' + n + '」,首頁會讀不到資料');
+  });
+
+  props.setProperty('SHEET_ID', id);
+  return { ok: true, sheetId: id, custom: true, title: book.getName(), sheets: names, warnings: warnings,
+           message: '已儲存' };
 }
 
 function teamsSheet_() {
