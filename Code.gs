@@ -42,11 +42,15 @@ const COL = {
   awayName: 6,
   awayId: 7,
   homeScore: 8,
-  awayScore: 9
+  awayScore: 9,
+  group: 10
 };
 // ==================
 
 function doGet(e) {
+  const page = e && e.parameter && e.parameter.page;
+  if (page === 'login') return htmlPage_('admin');
+  if (page === 'dashboard') return htmlPage_('dashboard');
   const action = e && e.parameter && e.parameter.action;
 
   // 公開資訊(本來就會出現在網頁原始碼裡):目前的試算表 ID 與日期分頁名稱
@@ -70,6 +74,18 @@ function doGet(e) {
   return json_({ ok: true, message: '飛行日常聯賽後台服務運作中' });
 }
 
+function htmlPage_(fileName) {
+  const template = HtmlService.createTemplateFromFile(fileName);
+  const url = ScriptApp.getService().getUrl() || '';
+  template.APPS_SCRIPT_URL = url;
+  template.DASHBOARD_URL = url + '?page=dashboard';
+  template.LOGIN_URL = url + '?page=login';
+  template.SHEET_URL = ss_().getUrl();
+  return template.evaluate()
+    .setTitle(fileName === 'admin' ? '測試後台登入' : '測試賽事管理後台')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
 function doPost(e) {
   let req;
   try {
@@ -78,6 +94,15 @@ function doPost(e) {
     return json_({ ok: false, error: '請求格式錯誤' });
   }
 
+  return handleRequest_(req);
+}
+
+// HtmlService pages call this server-side bridge directly, avoiding cross-origin fetch redirects.
+function apiCall(req) {
+  return JSON.parse(handleRequest_(req).getContent());
+}
+
+function handleRequest_(req) {
   const cache = CacheService.getScriptCache();
   const fails = Number(cache.get('fails') || 0);
   if (fails >= MAX_FAILS) {
@@ -102,6 +127,8 @@ function doPost(e) {
         return json_(changeCredentials_(req));
       case 'addMatch':
         return json_(addMatch_(req));
+      case 'addMatches':
+        return json_(addMatches_(req));
       case 'addTeam':
         return json_(addTeam_(req));
       case 'listTeams':
@@ -200,7 +227,10 @@ const TEAM_FIELDS = [
 function ss_() {
   const id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
   if (id) return SpreadsheetApp.openById(id);
-  return SpreadsheetApp.getActive() || SpreadsheetApp.openById(SPREADSHEET_ID);
+  const active = SpreadsheetApp.getActive();
+  if (active) return active;
+  if (SPREADSHEET_ID) return SpreadsheetApp.openById(SPREADSHEET_ID);
+  throw new Error('尚未設定試算表。請在測試 Apps Script 設定測試用 SHEET_ID。');
 }
 
 /* ---------- 系統設定 ---------- */
@@ -369,6 +399,7 @@ function addMatch_(req) {
   const away = String(req.away || '').trim();
   const hs = Number(req.homeScore);
   const as = Number(req.awayScore);
+  const group = String(req.group || '').trim().slice(0, 30);
 
   if (!/^\d{3,4}$/.test(sheetName)) return { ok: false, error: '日期分頁名稱格式錯誤' };
   if (!home || !away || home === away) return { ok: false, error: '請選擇兩支不同的隊伍' };
@@ -399,9 +430,24 @@ function addMatch_(req) {
     if (COL.awayId) header[COL.awayId - 1] = '客隊編號';
     header[COL.homeScore - 1] = '主隊得分';
     header[COL.awayScore - 1] = '客隊得分';
+    header[COL.group - 1] = '分組';
     sheet.getRange(1, 1, 1, header.length).setValues([Array.from(header, function (v) { return v || ''; })]);
     created = true;
   }
+
+  if (!created && sheet.getLastRow() === 0) {
+    const header = new Array(COL.group).fill('');
+    header[COL.date - 1] = '日期'; header[COL.matchNo - 1] = '場次';
+    header[COL.homeId - 1] = '主隊編號'; header[COL.homeName - 1] = '主隊名稱';
+    header[COL.awayName - 1] = '客隊名稱'; header[COL.awayId - 1] = '客隊編號';
+    header[COL.homeScore - 1] = '主隊得分'; header[COL.awayScore - 1] = '客隊得分';
+    header[COL.group - 1] = '分組';
+    sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  }
+
+  const groupHeader = sheet.getRange(1, COL.group).getDisplayValue().trim();
+  if (!groupHeader) sheet.getRange(1, COL.group).setValue('分組');
+  else if (groupHeader !== '分組') throw new Error('日期分頁 J 欄已被其他欄位使用，無法安全寫入分組');
 
   const lastRow = sheet.getLastRow();
   let lastNo = 0;
@@ -416,7 +462,7 @@ function addMatch_(req) {
   const row = lastRow + 1;
 
   const maxCol = Math.max(COL.date, COL.matchNo, COL.homeId, COL.homeName, COL.vs,
-                          COL.awayName, COL.awayId, COL.homeScore, COL.awayScore);
+                          COL.awayName, COL.awayId, COL.homeScore, COL.awayScore, COL.group);
   const values = new Array(maxCol).fill('');
   values[COL.date - 1] = String(req.dateText || '');
   values[COL.matchNo - 1] = matchNo;
@@ -427,6 +473,7 @@ function addMatch_(req) {
   if (COL.awayId) values[COL.awayId - 1] = teamIds[away];
   values[COL.homeScore - 1] = hs;
   values[COL.awayScore - 1] = as;
+  values[COL.group - 1] = group;
 
   const range = sheet.getRange(row, 1, 1, maxCol);
   range.setNumberFormat('@');
@@ -436,6 +483,108 @@ function addMatch_(req) {
   sheet.getRange(row, COL.awayScore).setNumberFormat('General').setValue(as);
 
   return { ok: true, sheetName: sheetName, matchNo: matchNo, createdSheet: created };
+}
+
+// 對戰表批次寫入:先完整驗證所有場次,避免因輸入錯誤只寫入一部分。
+function addMatches_(req) {
+  const matches = req.matches;
+  if (!Array.isArray(matches) || matches.length < 1 || matches.length > 300) {
+    return { ok: false, error: '對戰場次數量不正確' };
+  }
+  const sheetName = String(req.sheetName || '').trim();
+  if (!/^\d{3,4}$/.test(sheetName)) return { ok: false, error: '日期分頁名稱格式錯誤' };
+
+  const sheet = ss_().getSheetByName(TEAMS_SHEET);
+  if (!sheet) return { ok: false, error: '找不到 Teams 分頁' };
+  const rows = sheet.getDataRange().getValues();
+  const teamIds = {};
+  for (let i = 1; i < rows.length; i++) {
+    const name = String(rows[i][1] || '').trim();
+    if (name) teamIds[name] = rows[i][0];
+  }
+
+  const usedPairs = {};
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i] || {};
+    const home = String(m.home || '').trim();
+    const away = String(m.away || '').trim();
+    const hs = Number(m.homeScore);
+    const as = Number(m.awayScore);
+    if (!home || !away || home === away) return { ok: false, error: '第 ' + (i + 1) + ' 場隊伍資料不正確' };
+    if (!(home in teamIds) || !(away in teamIds)) return { ok: false, error: '第 ' + (i + 1) + ' 場包含不在 Teams 名單內的隊伍' };
+    if (m.homeScore === '' || m.awayScore === '' || !Number.isInteger(hs) || !Number.isInteger(as) || hs < 0 || as < 0) {
+      return { ok: false, error: '第 ' + (i + 1) + ' 場比分必須是 0 以上的整數' };
+    }
+    const pairKey = [home, away].sort().join('|');
+    if (usedPairs[pairKey]) return { ok: false, error: '對戰表中有重複的隊伍組合' };
+    usedPairs[pairKey] = true;
+  }
+
+  const book = ss_();
+  let target = book.getSheetByName(sheetName);
+  let created = false;
+  if (!target) {
+    target = book.insertSheet(sheetName);
+    const header = new Array(COL.group).fill('');
+    header[COL.date - 1] = '日期';
+    header[COL.matchNo - 1] = '場次';
+    header[COL.homeId - 1] = '主隊編號';
+    header[COL.homeName - 1] = '主隊名稱';
+    header[COL.awayName - 1] = '客隊名稱';
+    header[COL.awayId - 1] = '客隊編號';
+    header[COL.homeScore - 1] = '主隊得分';
+    header[COL.awayScore - 1] = '客隊得分';
+    header[COL.group - 1] = '分組';
+    target.getRange(1, 1, 1, header.length).setValues([header]);
+    created = true;
+  }
+  if (!created && target.getLastRow() === 0) {
+    const header = new Array(COL.group).fill('');
+    header[COL.date - 1] = '日期';
+    header[COL.matchNo - 1] = '場次';
+    header[COL.homeId - 1] = '主隊編號';
+    header[COL.homeName - 1] = '主隊名稱';
+    header[COL.awayName - 1] = '客隊名稱';
+    header[COL.awayId - 1] = '客隊編號';
+    header[COL.homeScore - 1] = '主隊得分';
+    header[COL.awayScore - 1] = '客隊得分';
+    header[COL.group - 1] = '分組';
+    target.getRange(1, 1, 1, header.length).setValues([header]);
+  }
+  const groupHeader = target.getRange(1, COL.group).getDisplayValue().trim();
+  if (!groupHeader) target.getRange(1, COL.group).setValue('分組');
+  else if (groupHeader !== '分組') return { ok: false, error: '日期分頁 J 欄已被其他欄位使用，無法安全寫入分組' };
+
+  const lastRow = target.getLastRow();
+  let lastNo = 0;
+  if (lastRow >= 2) {
+    target.getRange(2, COL.matchNo, lastRow - 1, 1).getValues().forEach(function (row) {
+      const n = Number(row[0]);
+      if (Number.isInteger(n) && n > lastNo) lastNo = n;
+    });
+  }
+  const firstMatchNo = lastNo + 1;
+  const values = matches.map(function (m, index) {
+    const row = new Array(COL.group).fill('');
+    row[COL.date - 1] = String(req.dateText || '');
+    row[COL.matchNo - 1] = firstMatchNo + index;
+    row[COL.homeId - 1] = teamIds[String(m.home).trim()];
+    row[COL.homeName - 1] = String(m.home).trim();
+    row[COL.vs - 1] = 'VS';
+    row[COL.awayName - 1] = String(m.away).trim();
+    row[COL.awayId - 1] = teamIds[String(m.away).trim()];
+    row[COL.homeScore - 1] = Number(m.homeScore);
+    row[COL.awayScore - 1] = Number(m.awayScore);
+    row[COL.group - 1] = String(m.group || '').trim().slice(0, 30);
+    return row;
+  });
+  const startRow = lastRow + 1;
+  target.getRange(startRow, 1, values.length, COL.group).setNumberFormat('@').setValues(values);
+  target.getRange(startRow, COL.matchNo, values.length, 1).setNumberFormat('General');
+  target.getRange(startRow, COL.homeScore, values.length, 1).setNumberFormat('General');
+  target.getRange(startRow, COL.awayScore, values.length, 1).setNumberFormat('General');
+  return { ok: true, count: values.length, sheetName: sheetName, createdSheet: created,
+           firstMatchNo: firstMatchNo, lastMatchNo: firstMatchNo + values.length - 1 };
 }
 
 function json_(obj) {
